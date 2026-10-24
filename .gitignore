@@ -1,0 +1,5 @@
+# Large source and generated dataset exports stay local and are not committed.
+Dataset/Drugcentral_2026-09-25.pgdump
+Dataset/RxNorm_full_prescribe_*/rrf/*.RRF
+Dataset/processed/RxNorm/RxNorm_full_prescribe_*_rrf_*.csv
+Dataset/processed/SIDER/SIDER_meddra_all_label_se_tsv.csv
