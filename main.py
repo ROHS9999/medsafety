@@ -187,6 +187,7 @@ def find_allergy(db: Session, user: models.User, allergy_id: int):
     allergy = (
         db.query(models.Allergy)
         .filter(models.Allergy.id == allergy_id, models.Allergy.user_id == user.id)
+        # .filter(models.Allergy.id == allergy_id)
         .first()
     )
     if allergy is None:
