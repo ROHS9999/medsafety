@@ -13,12 +13,14 @@ from pathlib import Path
 from typing import Iterable, Iterator, Sequence
 
 
-# Resolve paths from either the repository root or the Dataset directory.
-ROOT = Path.cwd() / "Dataset"
-if not ROOT.exists():
-    ROOT = Path.cwd()
+# Resolve the dataset folder from either the repository root or Dataset/.
+DATASET_DIR = Path.cwd() / "Dataset"
+if not DATASET_DIR.exists():
+    DATASET_DIR = Path.cwd()
 
-OUTPUT_DIR = ROOT / "processed"
+RAW_DIR = DATASET_DIR / "raw"
+CLEAN_DIR = DATASET_DIR / "clean"
+REPORTS_DIR = DATASET_DIR / "reports"
 SUPPORTED_SUFFIXES = {".csv", ".xlsx", ".rrf", ".xml", ".gz", ".pdf", ".pgdump"}
 
 SOURCE_INFO = {
@@ -91,7 +93,7 @@ RXNORM_SCHEMAS = {
 
 def source_metadata(path: Path) -> tuple[str, str]:
     """Return the best-known source URL and rights note for an input file."""
-    relative_path = path.relative_to(ROOT).as_posix()
+    relative_path = path.relative_to(RAW_DIR).as_posix()
 
     for marker, metadata in SOURCE_INFO.items():
         if marker in relative_path or marker == path.name:
@@ -136,7 +138,7 @@ def write_table(
         suffix = f"_{header_counts[header]}" if header_counts[header] > 1 else ""
         columns.append(f"{header}{suffix}")
 
-    output_path = OUTPUT_DIR / relative_name
+    output_path = CLEAN_DIR / relative_name
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     seen_hashes: set[bytes] = set()
@@ -292,7 +294,7 @@ def read_medlineplus_xml(path: Path) -> tuple[list[str], list[list[str]]]:
 
 def dataset_folder(path: Path) -> str:
     """Choose the output folder associated with a source dataset."""
-    relative_path = path.relative_to(ROOT).as_posix()
+    relative_path = path.relative_to(RAW_DIR).as_posix()
 
     if relative_path.startswith("DDIndex/"):
         return "DDIndex"
@@ -318,9 +320,8 @@ def discover_source_files() -> list[Path]:
     """Find supported source data while excluding generated output files."""
     return sorted(
         path
-        for path in ROOT.rglob("*")
+        for path in RAW_DIR.rglob("*")
         if path.is_file()
-        and OUTPUT_DIR not in path.parents
         and path.suffix.lower() in SUPPORTED_SUFFIXES
     )
 
@@ -331,7 +332,7 @@ def process_sources(files: Sequence[Path]) -> tuple[list[dict], list[tuple[str, 
     skipped: list[tuple[str, str]] = []
 
     for path in files:
-        relative_path = path.relative_to(ROOT).as_posix()
+        relative_path = path.relative_to(RAW_DIR).as_posix()
         stem = re.sub(
             r"[^A-Za-z0-9_-]+", "_", relative_path.rsplit(".", 1)[0]
         ).strip("_")
@@ -340,11 +341,24 @@ def process_sources(files: Sequence[Path]) -> tuple[list[dict], list[tuple[str, 
         try:
             if path.suffix.lower() == ".csv":
                 rows = read_delimited_rows(path)
-                headers = next(rows, None)
-                if headers is None:
+                first_row = next(rows, None)
+                if first_row is None:
                     skipped.append((relative_path, "Empty CSV"))
+                elif path.name == "ICD-10.csv":
+                    # The supplied ICD-10 file has no header. Keep every record
+                    # and use neutral positional labels until its schema is confirmed.
+                    headers = [f"field_{index + 1}" for index in range(len(first_row))]
+                    results.append(
+                        write_table(
+                            f"{folder}/{stem}.csv",
+                            headers,
+                            itertools.chain([first_row], rows),
+                        )
+                    )
                 else:
-                    results.append(write_table(f"{folder}/{stem}.csv", headers, rows))
+                    results.append(
+                        write_table(f"{folder}/{stem}.csv", first_row, rows)
+                    )
 
             elif path.suffix.lower() == ".rrf":
                 schema = RXNORM_SCHEMAS[path.stem.upper()]
@@ -436,7 +450,7 @@ def write_documentation(
 
             dictionary.append(
                 {
-                    "cleaned_file": result["file"],
+                    "cleaned_file": f"clean/{result['file']}",
                     "column": column,
                     "description": meaning,
                     "type_policy": (
@@ -446,7 +460,7 @@ def write_documentation(
                 }
             )
 
-    with (OUTPUT_DIR / "data_dictionary.csv").open(
+    with (REPORTS_DIR / "data_dictionary.csv").open(
         "w", encoding="utf-8-sig", newline=""
     ) as output_file:
         writer = csv.DictWriter(
@@ -456,7 +470,7 @@ def write_documentation(
         writer.writeheader()
         writer.writerows(dictionary)
 
-    with (OUTPUT_DIR / "source_references.csv").open(
+    with (REPORTS_DIR / "source_references.csv").open(
         "w", encoding="utf-8-sig", newline=""
     ) as output_file:
         fieldnames = [
@@ -467,13 +481,13 @@ def write_documentation(
         writer.writeheader()
 
         for path in files:
-            relative_path = path.relative_to(ROOT).as_posix()
+            relative_path = path.relative_to(RAW_DIR).as_posix()
             url, rights = source_metadata(path)
             base = re.sub(
                 r"[^A-Za-z0-9_-]+", "_", relative_path.rsplit(".", 1)[0]
             ).strip("_")
             outputs = "; ".join(
-                result["file"]
+                f"clean/{result['file']}"
                 for result in results
                 if Path(result["file"]).stem.startswith(base)
             )
@@ -483,7 +497,7 @@ def write_documentation(
             )
             writer.writerow(
                 {
-                    "source_file": relative_path,
+                    "source_file": f"raw/{relative_path}",
                     "source_url": url,
                     "licence_or_rights": rights,
                     "cleaned_csv_files": outputs,
@@ -491,7 +505,7 @@ def write_documentation(
                 }
             )
 
-    with (OUTPUT_DIR / "validation_report.csv").open(
+    with (REPORTS_DIR / "validation_report.csv").open(
         "w", encoding="utf-8-sig", newline=""
     ) as output_file:
         fieldnames = [
@@ -505,7 +519,7 @@ def write_documentation(
         for result in results:
             writer.writerow(
                 {
-                    "cleaned_file": result["file"],
+                    "cleaned_file": f"clean/{result['file']}",
                     "rows_in": result["rows_in"],
                     "rows_out": result["rows_out"],
                     "exact_duplicate_rows_removed": result["duplicates"],
@@ -538,7 +552,8 @@ def write_documentation(
 
 def main() -> None:
     """Run preprocessing and write the generated datasets and documentation."""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    CLEAN_DIR.mkdir(parents=True, exist_ok=True)
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     source_files = discover_source_files()
     results, skipped = process_sources(source_files)
     write_documentation(source_files, results, skipped)
@@ -546,7 +561,7 @@ def main() -> None:
     print(
         f"Wrote {len(results)} cleaned CSV tables and three generated "
         "documentation files "
-        f"to {OUTPUT_DIR}"
+        f"to {CLEAN_DIR} and {REPORTS_DIR}"
     )
     print("Not converted:")
     for source, reason in skipped:
