@@ -24,6 +24,7 @@ class CheckedPrescription(BaseModel):
     prescription_date: Optional[str]
     doctor_name: Optional[str]
     medicines: list[CheckedMedicine]
+    warnings: list[str]
 
 
 def fix_dashes(text: str) -> str:
@@ -74,11 +75,39 @@ def check_medicine(med: ReadMedicine) -> CheckedMedicine:
     )
 
 
+DATE_PATTERNS = (
+    r"(?<!\d)\d{1,2}\s*[/.\-]\s*\d{1,2}\s*[/.\-]\s*(\d{4}|\d{2})(?!\d)",      # 05/10/2026, 5-10-26
+    r"(?<!\d)\d{4}\s*-\s*\d{1,2}\s*-\s*\d{1,2}(?!\d)",                         # 2026-10-05
+    r"(?<!\d)\d{1,2}\s*(st|nd|rd|th)?\s*[A-Za-z]{3,9}\.?,?\s*(\d{4}|\d{2})(?!\d)",  # 5 Oct 2026
+    r"(?<![A-Za-z])[A-Za-z]{3,9}\.?\s*\d{1,2}(?!\d)\s*(st|nd|rd|th)?,?\s*(\d{4}|\d{2})(?!\d)",  # Oct 5, 2026
+)
+
+
+def date_looks_complete(text: str) -> bool:
+    """Does the written date have a day, a month and a year?"""
+    return any(re.search(pattern, fix_dashes(text)) for pattern in DATE_PATTERNS)
+
+
 def check_prescription(result: PrescriptionRead) -> CheckedPrescription:
+    medicines = [check_medicine(med) for med in result.medicines]
+    warnings = []
+
+    counted = result.medicine_lines_on_page
+    if counted is not None and counted != len(medicines):
+        warnings.append(
+            f"The page seems to list {counted} medicines, but {len(medicines)} were read. "
+            "Check the photo for missing medicines."
+        )
+
+    date = (result.prescription_date or "").strip()
+    if date and not date_looks_complete(date):
+        warnings.append(f"The date '{date}' looks incomplete. Check it against the photo.")
+
     return CheckedPrescription(
         prescription_date=result.prescription_date,
         doctor_name=result.doctor_name,
-        medicines=[check_medicine(med) for med in result.medicines],
+        medicines=medicines,
+        warnings=warnings,
     )
 
 
@@ -95,5 +124,7 @@ def show_checked(result: CheckedPrescription) -> None:
         for problem in med.problems:
             print(f"   PROBLEM    : {problem}")
         print()
+    for warning in result.warnings:
+        print(f"WARNING: {warning}")
     needs = sum(1 for med in result.medicines if med.unclear)
     print(f"{len(result.medicines)} medicines read, {needs} need the person to check.")

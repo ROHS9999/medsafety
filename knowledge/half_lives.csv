@@ -1,0 +1,28 @@
+salt,half_life_hours,washout_days_override,note
+paracetamol,2,,approximate adult value - verify
+ibuprofen,2,,approximate adult value - verify
+aspirin,3,7,the blood-thinning effect lasts about a week - verify
+diclofenac,2,,approximate adult value - verify
+naproxen,14,,approximate adult value - verify
+aceclofenac,4,,approximate adult value - verify
+
+clavulanic acid,1,,approximate adult value - verify
+azithromycin,68,,approximate adult value - verify
+cefixime,3.5,,approximate adult value - verify
+ciprofloxacin,4,,approximate adult value - verify
+doxycycline,18,,approximate adult value - verify
+metformin,6,,approximate adult value - verify
+glimepiride,6,,approximate adult value - verify
+pantoprazole,1,3,acid-lowering effect lasts a few days - verify
+omeprazole,1,3,acid-lowering effect lasts a few days - verify
+levothyroxine,168,,about 7 days - verify
+telmisartan,24,,approximate adult value - verify
+amlodipine,40,,approximate adult value - verify
+atorvastatin,14,,approximate adult value - verify
+cetirizine,8,,approximate adult value - verify
+levocetirizine,8,,approximate adult value - verify
+montelukast,4,,approximate adult value - verify
+fexofenadine,14,,approximate adult value - verify
+ondansetron,4,,approximate adult value - verify
+warfarin,40,,approximate adult value - verify
+amoxicillin,1,,approximate adult value - verify

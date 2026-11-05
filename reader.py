@@ -29,10 +29,14 @@ Rules:
 - For each medicine, written_text is the exact words of that line, as written.
 - name, strength, dose, frequency and duration are copied exactly as written
   (for example "1 OD 9 AM" or "x 1 mth"). Use null for anything that is not written.
-  - A pattern like 1-0-1 or 1-1-1 is the frequency. Put it in frequency, not in dose.
+- List EVERY medicine line on the page, in order. Never skip a line and never stop early.
+- First count the medicine lines on the page and put that number in medicine_lines_on_page.
+  Then list exactly that many medicines.
+- A pattern like 1-0-1 or 1-1-1 is the frequency. Put it in frequency, not in dose.
 - If any part of a medicine line is hard to read, set unclear to true and use null
   for the part you cannot read. Do not guess.
-- Copy the date exactly as written. If it could be read two ways, copy it as written and do not choose.
+- Copy the date digit by digit, with every slash and the full year. Never shorten it.
+  If it could be read two ways, copy it as written and do not choose.
 - Ignore the patient's name, age, vitals and complaints. Do not return them.
 - If there are no medicines, return an empty list."""
 
@@ -52,6 +56,7 @@ class ReadMedicine(BaseModel):
 class PrescriptionRead(BaseModel):
     prescription_date: Optional[str]
     doctor_name: Optional[str]
+    medicine_lines_on_page: Optional[int]
     medicines: list[ReadMedicine]
 
 
@@ -104,6 +109,7 @@ def read_prescription(image_path, client=None) -> PrescriptionRead:
 def show(result: PrescriptionRead) -> None:
     print("Date (as written):", result.prescription_date or "-")
     print("Doctor:", result.doctor_name or "-")
+    print("Medicine lines the AI counted on the page:", result.medicine_lines_on_page if result.medicine_lines_on_page is not None else "-")
     print()
     if not result.medicines:
         print("No medicines found.")

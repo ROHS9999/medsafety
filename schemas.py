@@ -4,6 +4,7 @@ from typing import Literal, Optional
 # from pydantic import BaseModel, EmailStr, Field, model_validator
 # from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, model_validator
+from durations import suggest_days
 
 
 class SignupIn(BaseModel):
@@ -122,19 +123,23 @@ class DoctorOut(DoctorIn):
     id: int
 
     
-
 class PrescriptionOut(BaseModel):
     id: int
     doctor_id: Optional[int] = None
     prescription_date: date
     notes: Optional[str] = None
+    reading_status: str
+    reading_error: Optional[str] = None
+    date_as_written: Optional[str] = None
+    doctor_as_written: Optional[str] = None
     file_path: Optional[str] = Field(default=None, exclude=True)
+    list_confirmed: bool
+    reading_note: Optional[str] = None
 
     @computed_field
     @property
     def has_file(self) -> bool:
         return self.file_path is not None
-
 
     
 
@@ -162,3 +167,20 @@ class MedicineOut(MedicineIn):
     salt_name: Optional[str] = None
     half_life_hours: Optional[float] = None
     confirmed: bool
+    duration_text: Optional[str] = None
+    written_text: Optional[str] = None
+    unclear: bool
+    problems_text: Optional[str] = Field(default=None, exclude=True)
+
+    @computed_field
+    @property
+    def problems(self) -> list[str]:
+        return [line for line in (self.problems_text or "").split("\n") if line]
+    @computed_field
+    @property
+    def suggested_duration_days(self) -> Optional[int]:
+        return suggest_days(self.duration_text)
+
+
+class ConfirmListIn(BaseModel):
+    nothing_is_missing: bool

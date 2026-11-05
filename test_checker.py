@@ -77,7 +77,7 @@ def test_a_missing_written_line_is_flagged():
 
 
 def test_whole_prescription_keeps_the_date_exactly_and_counts_checks():
-    read = PrescriptionRead(
+    read = PrescriptionRead(medicine_lines_on_page=None, 
         prescription_date="05/10/2026", doctor_name="Dr. A. Rao",
         medicines=[med("Tab Dolo 650 mg 1 OD", "Tab Dolo", strength="650 mg"),
                    med("Tab Pan 40 mg", "Tab Pan", duration="10 days")],
@@ -91,3 +91,45 @@ def test_the_original_answer_is_not_changed():
     original = med("Tab Pan 40 mg", "Tab Pan", duration="10 days")
     check_medicine(original)
     assert original.duration == "10 days"
+
+
+# ---------- Brick 20: dates and the medicine count ----------
+import pytest
+
+from checker import date_looks_complete
+
+
+@pytest.mark.parametrize("text,ok", [
+    ("05/10/2026", True), ("5/10/26", True), ("24-7-2023", True), ("24.07.2023", True),
+    ("2026-10-05", True), ("5 Oct 2026", True), ("5th October 2026", True), ("Oct 5, 2026", True), ("October 5th 2026", True), ("Oct 2026", False),
+    ("6/6/", False), ("6/6", False), ("05/10", False), ("2026", False), ("hello", False), ("", False),
+])
+def test_date_looks_complete(text, ok):
+    assert date_looks_complete(text) is ok
+
+
+def make_reading(count, how_many, date="05/10/2026"):
+    medicines = [med(f"{i}. Tab Drug{i} 10 mg", f"Tab Drug{i}", strength="10 mg") for i in range(1, how_many + 1)]
+    return PrescriptionRead(medicine_lines_on_page=count, prescription_date=date, doctor_name=None, medicines=medicines)
+
+
+def test_a_missing_medicine_gives_a_warning():
+    checked = check_prescription(make_reading(count=5, how_many=3))
+    assert len(checked.warnings) == 1 and "5" in checked.warnings[0] and "3" in checked.warnings[0]
+
+
+def test_matching_count_gives_no_warning():
+    assert check_prescription(make_reading(count=3, how_many=3)).warnings == []
+
+
+def test_no_count_from_the_ai_gives_no_count_warning():
+    assert check_prescription(make_reading(count=None, how_many=3)).warnings == []
+
+
+def test_an_incomplete_date_gives_a_warning():
+    checked = check_prescription(make_reading(count=2, how_many=2, date="6/6/"))
+    assert len(checked.warnings) == 1 and "6/6/" in checked.warnings[0]
+
+
+def test_a_missing_date_is_not_a_warning():
+    assert check_prescription(make_reading(count=2, how_many=2, date=None)).warnings == []

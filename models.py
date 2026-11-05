@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Date, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, Date, Float, ForeignKey, Integer, String, UniqueConstraint
 from database import Base
 
 
@@ -84,7 +84,13 @@ class Prescription(Base):
     prescription_date = Column(Date, nullable=False)
     file_path = Column(String, nullable=True)
     notes = Column(String, nullable=True)
-
+    #New lines 
+    reading_status = Column(String, nullable=False, default="none")
+    reading_error = Column(String, nullable=True)
+    date_as_written = Column(String, nullable=True)
+    doctor_as_written = Column(String, nullable=True)
+    list_confirmed = Column(Boolean, nullable=False, default=False)
+    reading_note = Column(String, nullable=True)
     
 
 class Medicine(Base):
@@ -103,3 +109,20 @@ class Medicine(Base):
     end_date = Column(Date, nullable=True)
     half_life_hours = Column(Float, nullable=True)
     confirmed = Column(Boolean, nullable=False, default=True)
+    # New lines
+    duration_text = Column(String, nullable=True)
+    written_text = Column(String, nullable=True)
+    unclear = Column(Boolean, nullable=False, default=False)
+    problems_text = Column(String, nullable=True)
+    
+    
+    
+
+class DrugInteraction(Base):
+    __tablename__ = "drug_interactions"
+    __table_args__ = (UniqueConstraint("drug_a", "drug_b"),)
+
+    id = Column(Integer, primary_key=True)
+    drug_a = Column(String, nullable=False, index=True)
+    drug_b = Column(String, nullable=False, index=True)
+    level = Column(String, nullable=False)       # Major / Moderate / Minor / Unknown

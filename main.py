@@ -1,17 +1,29 @@
 import os
 import uuid
+
 from datetime import date, timedelta
 from typing import Literal, Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
-
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 import models
+import reading_job
+# from safety import SafetyReport, SaltIn, current_confirmed, run_safety_check
+from safety import SafetyReport, SaltIn, check_for_user
+from durations import suggest_days
 from database import Base, engine, get_db
 from deps import current_user
 
@@ -19,6 +31,7 @@ from schemas import (
     AllergyIn,
     AllergyOut,
     ConditionIn,
+    ConfirmListIn,
     ConditionOut,
     DoctorIn,
     DoctorOut,
@@ -427,6 +440,7 @@ def find_prescription(db: Session, user: models.User, prescription_id: int):
 
 @app.post("/prescriptions", response_model=PrescriptionOut, status_code=201)
 async def add_prescription(
+    background_tasks: BackgroundTasks,
     prescription_date: date = Form(...),
     doctor_id: Optional[int] = Form(None),
     notes: Optional[str] = Form(None),
@@ -436,7 +450,10 @@ async def add_prescription(
 ):
     if prescription_date > date.today():
         raise HTTPException(status_code=422, detail="Prescription date cannot be in the future")
-
+    
+    if doctor_id == 0:
+        doctor_id = None
+        
     if doctor_id is not None:
         find_doctor(db, user, doctor_id)
 
@@ -465,11 +482,15 @@ async def add_prescription(
         prescription_date=prescription_date,
         notes=notes,
         file_path=saved_path,
+        reading_status="reading" if saved_path else "none",
     )
     db.add(prescription)
     db.commit()
     db.refresh(prescription)
+    if saved_path:
+        reading_job.schedule_reading(background_tasks, prescription.id)
     return prescription
+
 
 
 @app.get("/prescriptions", response_model=list[PrescriptionOut])
@@ -580,6 +601,7 @@ def current_medicines(user: models.User = Depends(current_user), db: Session = D
         db.query(models.Medicine)
         .filter(
             models.Medicine.user_id == user.id,
+            models.Medicine.confirmed.is_(True),
             or_(models.Medicine.end_date.is_(None), models.Medicine.end_date >= date.today()),
         )
         .order_by(models.Medicine.start_date.desc(), models.Medicine.id.desc())
@@ -591,19 +613,28 @@ def current_medicines(user: models.User = Depends(current_user), db: Session = D
 def update_medicine(
     medicine_id: int,
     body: MedicineIn,
+    confirm: bool = False,
     user: models.User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
+    """Edit a medicine. Add ?confirm=true to also confirm it, in one step."""
     medicine = find_medicine(db, user, medicine_id)
     prescription = find_prescription(db, user, medicine.prescription_id)
     data = fill_dates(body.model_dump(), prescription.prescription_date)
 
     for key, value in data.items():
         setattr(medicine, key, value)
+
+    if not medicine.confirmed:
+        # The person has looked at it, so the warning flag is cleared.
+        medicine.unclear = False
+        medicine.problems_text = None
+        if confirm:
+            medicine.confirmed = True
+
     db.commit()
     db.refresh(medicine)
     return medicine
-
 
 @app.delete("/medicines/{medicine_id}", status_code=204)
 def delete_medicine(
@@ -614,3 +645,137 @@ def delete_medicine(
     medicine = find_medicine(db, user, medicine_id)
     db.delete(medicine)
     db.commit()
+    
+
+
+@app.get("/prescriptions/{prescription_id}", response_model=PrescriptionOut)
+def get_prescription(
+    prescription_id: int,
+    user: models.User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    return find_prescription(db, user, prescription_id)
+
+
+@app.post("/prescriptions/{prescription_id}/read", response_model=PrescriptionOut, status_code=202)
+def read_again(
+    prescription_id: int,
+    background_tasks: BackgroundTasks,
+    user: models.User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    prescription = find_prescription(db, user, prescription_id)
+    if not prescription.file_path or not os.path.exists(prescription.file_path):
+        raise HTTPException(status_code=400, detail="This prescription has no file to read")
+
+    prescription.reading_status = "reading"
+    prescription.reading_error = None
+    db.commit()
+    db.refresh(prescription)
+    reading_job.schedule_reading(background_tasks, prescription.id)
+    return prescription
+
+
+
+
+def confirm_as_read(medicine: models.Medicine, prescription: models.Prescription):
+    """Confirm a medicine exactly as it was read. A clear duration is turned into dates."""
+    data = {
+        "start_date": medicine.start_date,
+        "end_date": medicine.end_date,
+        "duration_days": medicine.duration_days,
+    }
+    if data["duration_days"] is None and data["end_date"] is None:
+        data["duration_days"] = suggest_days(medicine.duration_text)
+    data = fill_dates(data, prescription.prescription_date)
+    for key, value in data.items():
+        setattr(medicine, key, value)
+    medicine.confirmed = True
+    medicine.unclear = False
+    medicine.problems_text = None
+
+
+@app.post("/medicines/{medicine_id}/confirm", response_model=MedicineOut)
+def confirm_medicine(
+    medicine_id: int,
+    user: models.User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    medicine = find_medicine(db, user, medicine_id)
+    prescription = find_prescription(db, user, medicine.prescription_id)
+
+    if medicine.confirmed:
+        raise HTTPException(status_code=409, detail="This medicine is already confirmed")
+    if medicine.unclear:
+        raise HTTPException(
+            status_code=409,
+            detail="This medicine was flagged. Check it against the photo, then use "
+            "PUT /medicines/{id}?confirm=true with the correct details.",
+        )
+
+    confirm_as_read(medicine, prescription)
+    db.commit()
+    db.refresh(medicine)
+    return medicine
+
+
+@app.post("/prescriptions/{prescription_id}/confirm", response_model=PrescriptionOut)
+def confirm_list(
+    prescription_id: int,
+    body: ConfirmListIn,
+    user: models.User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """The person says: I checked the photo, every medicine is listed and correct."""
+    prescription = find_prescription(db, user, prescription_id)
+
+    if prescription.reading_status == "reading":
+        raise HTTPException(status_code=409, detail="The prescription is still being read")
+    if not body.nothing_is_missing:
+        raise HTTPException(
+            status_code=400,
+            detail="Check the photo for missing medicines first. Add any that are missing.",
+        )
+
+    waiting = (
+        db.query(models.Medicine)
+        .filter(models.Medicine.prescription_id == prescription.id, models.Medicine.confirmed.is_(False))
+        .all()
+    )
+    flagged = [m for m in waiting if m.unclear]
+    if flagged:
+        ids = ", ".join(str(m.id) for m in flagged)
+        raise HTTPException(
+            status_code=409,
+            detail=f"{len(flagged)} medicine(s) are flagged (ids: {ids}). Check them first.",
+        )
+
+    for medicine in waiting:
+        confirm_as_read(medicine, prescription)
+    prescription.list_confirmed = True
+    db.commit()
+    db.refresh(prescription)
+    return prescription
+
+
+
+
+@app.put("/medicines/{medicine_id}/salt", response_model=MedicineOut)
+def set_salt(
+    medicine_id: int,
+    body: SaltIn,
+    user: models.User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Set the salt (active ingredient) by hand. Send null or an empty text to clear it."""
+    medicine = find_medicine(db, user, medicine_id)
+    medicine.salt_name = body.salt_name or None
+    db.commit()
+    db.refresh(medicine)
+    return medicine
+
+
+@app.get("/safety/check", response_model=SafetyReport)
+def safety_check(user: models.User = Depends(current_user), db: Session = Depends(get_db)):
+    """Checks medicines, allergies, illnesses and timing."""
+    return check_for_user(db, user.id)
