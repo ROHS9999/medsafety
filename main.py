@@ -14,6 +14,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 
 from sqlalchemy import func, or_
@@ -23,6 +24,7 @@ import models
 import reading_job
 # from safety import SafetyReport, SaltIn, current_confirmed, run_safety_check
 from safety import SafetyReport, SaltIn, check_for_user
+from explainer import ExplainedReport, explain_for_user
 from durations import suggest_days
 from database import Base, engine, get_db
 from deps import current_user
@@ -53,6 +55,20 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
+def frontend_origins() -> list:
+    text = os.getenv(
+        "FRONTEND_ORIGINS",
+        "http://localhost:3000,http://localhost:5173"
+    )
+    return [origin.strip() for origin in text.split(",") if origin.strip()]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=frontend_origins(),
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
 @app.get("/health")
 def health():
@@ -779,3 +795,11 @@ def set_salt(
 def safety_check(user: models.User = Depends(current_user), db: Session = Depends(get_db)):
     """Checks medicines, allergies, illnesses and timing."""
     return check_for_user(db, user.id)
+
+
+
+@app.get("/safety/explain", response_model=ExplainedReport)
+def safety_explain(user: models.User = Depends(current_user), db: Session = Depends(get_db)):
+    """The safety report in simple words."""
+    return explain_for_user(db, user.id)
+
